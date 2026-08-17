@@ -81,6 +81,7 @@ export interface AudioProcessingSettings {
   vadThreshold: number; // 3 - 35 (default 8)
   silenceHangoverMs: number; // 300 - 1500 (default 700)
   dialectAudioBoost: boolean; // Pre-processing frequency equalization boost for Sichuan/Chongqing and dialect phonemes
+  dialectSemanticMatching?: boolean; // Gemini-based context-aware disambiguation for high-frequency dialect confusion words
   noiseSuppressionMode: 'standard' | 'high_noise' | 'speech_clarity';
   highPassFilterEnabled: boolean; // 85Hz highpass filter to cut out desk vibrations and AC rumbling
 }

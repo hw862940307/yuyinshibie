@@ -721,9 +721,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Toggles for Sichuan/Chongqing Boost & High-Pass Filter */}
+              {/* Toggles for Sichuan/Chongqing Boost, Semantic Matching & High-Pass Filter */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/80">
-                <label className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-950/60 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer">
+                <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer">
                   <input
                     type="checkbox"
                     checked={current.audioSettings?.dialectAudioBoost !== false}
@@ -737,6 +737,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             vadThreshold: 8,
                             silenceHangoverMs: 700,
                             dialectAudioBoost: true,
+                            dialectSemanticMatching: true,
                             noiseSuppressionMode: 'speech_clarity',
                             highPassFilterEnabled: true,
                           }),
@@ -756,7 +757,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </label>
 
-                <label className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-950/60 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer">
+                {/* Dialect Semantic Matching Switch */}
+                <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-indigo-950/30 border border-indigo-500/30 hover:border-indigo-500/50 transition-colors cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={current.audioSettings?.dialectSemanticMatching !== false}
+                    onChange={(e) =>
+                      setCurrent({
+                        ...current,
+                        audioSettings: {
+                          ...(current.audioSettings || {
+                            audioGain: 1.6,
+                            vadSensitivity: 'normal',
+                            vadThreshold: 8,
+                            silenceHangoverMs: 700,
+                            dialectAudioBoost: true,
+                            dialectSemanticMatching: true,
+                            noiseSuppressionMode: 'speech_clarity',
+                            highPassFilterEnabled: true,
+                          }),
+                          dialectSemanticMatching: e.target.checked,
+                        },
+                      })
+                    }
+                    className="mt-0.5 rounded text-indigo-600 focus:ring-0"
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-indigo-300 flex items-center gap-1.5">
+                      <span>方言语义匹配模式 (Gemini 语义纠错)</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono font-bold">
+                        AI 纠偏
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 leading-tight mt-0.5">
+                      启用四川话/重庆话时，调用 Gemini 3.1 Flash-Lite 对高频混淆词（如男/蓝、鞋/孩、飞/灰、要得）结合整句上下文自动二次修正。
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer sm:col-span-2">
                   <input
                     type="checkbox"
                     checked={current.audioSettings?.highPassFilterEnabled !== false}
@@ -770,6 +809,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             vadThreshold: 8,
                             silenceHangoverMs: 700,
                             dialectAudioBoost: true,
+                            dialectSemanticMatching: true,
                             noiseSuppressionMode: 'speech_clarity',
                             highPassFilterEnabled: true,
                           }),

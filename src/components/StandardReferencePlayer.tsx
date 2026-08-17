@@ -16,10 +16,15 @@ import {
   BookOpen,
   ArrowRightLeft,
   X,
+  Repeat,
+  Share2,
+  Flag,
+  Scissors,
 } from 'lucide-react';
 import { ReferenceReadingItem } from '../types';
 import { BUILTIN_REFERENCE_READINGS } from '../data/referenceReadings';
 import { speechManager, ExtractedAudioMetrics } from '../utils/speech';
+import { ReviewPosterModal } from './ReviewPosterModal';
 
 interface StandardReferencePlayerProps {
   userAudioBlob?: Blob | null;
@@ -54,6 +59,14 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
   const [userProgress, setUserProgress] = useState(0); // 0 - 100
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [activeTab, setActiveTab] = useState<'compare' | 'tips' | 'custom'>('compare');
+
+  // A-B Loop state
+  const [isAbLoopEnabled, setIsAbLoopEnabled] = useState(false);
+  const [loopStart, setLoopStart] = useState<number>(15); // Percentage 0 - 100
+  const [loopEnd, setLoopEnd] = useState<number>(65); // Percentage 0 - 100
+
+  // Review Poster Modal State
+  const [isPosterOpen, setIsPosterOpen] = useState(false);
 
   // Waveform data
   const [referenceMetrics, setReferenceMetrics] = useState<ExtractedAudioMetrics | null>(null);
@@ -193,7 +206,7 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
     setUserProgress(0);
   };
 
-  // Play Reference Audio or Neural TTS Demo
+  // Play Reference Audio or Neural TTS Demo with A-B Loop Support
   const handlePlayReference = () => {
     if (isPlayingReference) {
       handleStopAll();
@@ -210,19 +223,43 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
         referenceAudioRef.current.src = activeReading.audioUrl;
       }
       referenceAudioRef.current.playbackRate = playbackSpeed;
+
+      const duration = referenceAudioRef.current.duration || 6;
+      const startPct = isAbLoopEnabled ? Math.min(loopStart, loopEnd) : 0;
+      const endPct = isAbLoopEnabled ? Math.max(loopStart, loopEnd) : 100;
+      const startSec = (startPct / 100) * duration;
+      const endSec = (endPct / 100) * duration;
+
+      referenceAudioRef.current.currentTime = startSec;
+      setReferenceProgress(startPct);
+
       referenceAudioRef.current.onended = () => {
-        setIsPlayingReference(false);
-        setReferenceProgress(0);
-        clearInterval(playTimerRef.current);
+        if (isAbLoopEnabled) {
+          if (referenceAudioRef.current) {
+            referenceAudioRef.current.currentTime = startSec;
+            referenceAudioRef.current.play().catch(() => {});
+          }
+        } else {
+          setIsPlayingReference(false);
+          setReferenceProgress(0);
+          clearInterval(playTimerRef.current);
+        }
       };
+
       referenceAudioRef.current.play().then(() => {
         playTimerRef.current = setInterval(() => {
           if (referenceAudioRef.current && referenceAudioRef.current.duration) {
-            setReferenceProgress(
-              (referenceAudioRef.current.currentTime / referenceAudioRef.current.duration) * 100
-            );
+            const curTime = referenceAudioRef.current.currentTime;
+            const curProgress = (curTime / referenceAudioRef.current.duration) * 100;
+            setReferenceProgress(curProgress);
+
+            // Check A-B Loop Boundary
+            if (isAbLoopEnabled && curTime >= endSec) {
+              referenceAudioRef.current.currentTime = startSec;
+              setReferenceProgress(startPct);
+            }
           }
-        }, 80);
+        }, 60);
       }).catch(() => {
         playTtsReference();
       });
@@ -233,19 +270,30 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
 
   const playTtsReference = () => {
     setIsPlayingReference(true);
-    let step = 0;
+    const startPct = isAbLoopEnabled ? Math.min(loopStart, loopEnd) : 0;
+    const endPct = isAbLoopEnabled ? Math.max(loopStart, loopEnd) : 100;
+
+    let progressVal = startPct;
+    setReferenceProgress(progressVal);
+
     const estDurationMs = Math.max(3000, (activeReading.text.length / (activeReading.targetWpm * playbackSpeed)) * 60000);
-    const intervalMs = 100;
-    const totalSteps = estDurationMs / intervalMs;
+    const intervalMs = 80;
+    const stepIncrement = ((100 / (estDurationMs / intervalMs)));
 
     clearInterval(playTimerRef.current);
     playTimerRef.current = setInterval(() => {
-      step += 1;
-      setReferenceProgress(Math.min(100, Math.round((step / totalSteps) * 100)));
-      if (step >= totalSteps) {
-        clearInterval(playTimerRef.current);
-        setIsPlayingReference(false);
-        setReferenceProgress(0);
+      progressVal += stepIncrement;
+      if (progressVal >= endPct) {
+        if (isAbLoopEnabled) {
+          progressVal = startPct;
+          setReferenceProgress(startPct);
+        } else {
+          clearInterval(playTimerRef.current);
+          setIsPlayingReference(false);
+          setReferenceProgress(0);
+        }
+      } else {
+        setReferenceProgress(Math.min(100, progressVal));
       }
     }, intervalMs);
 
@@ -254,9 +302,11 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
       playbackSpeed,
       () => setIsPlayingReference(true),
       () => {
-        setIsPlayingReference(false);
-        setReferenceProgress(0);
-        clearInterval(playTimerRef.current);
+        if (!isAbLoopEnabled) {
+          setIsPlayingReference(false);
+          setReferenceProgress(0);
+          clearInterval(playTimerRef.current);
+        }
       }
     );
   };
@@ -320,7 +370,6 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
     if (!file) return;
 
     setCustomAudioFile(file);
-    const customUrl = URL.createObjectURL(file);
 
     // Auto-transcribe audio file to text if user hasn't typed text yet
     if (!customText.trim()) {
@@ -364,7 +413,7 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
 
   // Calculate Intonation & Rhythm Match Scores
   const calculateMatchScore = () => {
-    if (!userMetrics || !referenceMetrics) return { intonationScore: 86, cadenceScore: 88, paceDelta: 0 };
+    if (!userMetrics || !referenceMetrics) return { intonationScore: 86, cadenceScore: 88, paceDelta: 0, userWpm: 210 };
 
     // Compare average pitch alignment
     let pitchDiffSum = 0;
@@ -408,8 +457,19 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
           </div>
         </div>
 
-        {/* Tab & Upload Controls */}
-        <div className="flex items-center gap-2">
+        {/* Tab, Export Poster & Upload Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Export Review Poster Button */}
+          <button
+            type="button"
+            onClick={() => setIsPosterOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-semibold shadow-xs transition-all cursor-pointer"
+            title="生成带水印的声学对比复盘海报"
+          >
+            <Share2 size={13} className="text-emerald-400" />
+            <span>导出复盘海报</span>
+          </button>
+
           <div className="flex items-center bg-zinc-900 rounded-xl p-0.5 border border-zinc-800 text-xs">
             <button
               onClick={() => setActiveTab('compare')}
@@ -604,31 +664,59 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
 
           {/* DUAL-TRACK WAVEFORM COMPARISON CANVAS */}
           <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-3.5 flex flex-col gap-3">
-            {/* TRACK 1: Standard Reference Audio Waveform */}
-            <div className="flex flex-col gap-1">
+            {/* TRACK 1: Standard Reference Audio Waveform with A-B Loop Highlights */}
+            <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-[11px]">
-                <span className="flex items-center gap-1.5 font-semibold text-emerald-400">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  标准范读音频 (示范起伏 & 语调线)
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1.5 font-semibold text-emerald-400">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    标准范读音频 (示范起伏 & 语调线)
+                  </span>
+                  {isAbLoopEnabled && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/30 flex items-center gap-1">
+                      <Repeat size={10} />
+                      A-B 循环区间 [{loopStart}% ~ {loopEnd}%]
+                    </span>
+                  )}
+                </div>
                 <span className="text-zinc-500 font-mono text-[10px]">
-                  {isPlayingReference ? '正在示范播放...' : '标准声学模板'}
+                  {isPlayingReference ? (isAbLoopEnabled ? 'A-B 片段循环中...' : '正在示范播放...') : '标准声学模板'}
                 </span>
               </div>
 
               {/* Waveform Bar Track 1 */}
-              <div className="h-14 bg-zinc-900/90 rounded-lg p-1.5 relative overflow-hidden flex items-end justify-between gap-0.5 border border-zinc-800/80">
+              <div className="h-16 bg-zinc-900/90 rounded-xl p-1.5 relative overflow-hidden flex items-end justify-between gap-0.5 border border-zinc-800/80 group">
+                {/* A-B Loop Shaded Selection Box */}
+                {isAbLoopEnabled && (
+                  <div
+                    className="absolute top-0 bottom-0 bg-emerald-500/15 border-l-2 border-r-2 border-emerald-400/80 pointer-events-none z-10 transition-all duration-75"
+                    style={{
+                      left: `${Math.min(loopStart, loopEnd)}%`,
+                      width: `${Math.abs(loopEnd - loopStart)}%`,
+                    }}
+                  >
+                    {/* Point A Flag */}
+                    <span className="absolute top-1 left-1 px-1.5 py-0.2 rounded bg-emerald-500 text-zinc-950 text-[9px] font-bold font-mono shadow-xs">
+                      A 起点
+                    </span>
+                    {/* Point B Flag */}
+                    <span className="absolute top-1 right-1 px-1.5 py-0.2 rounded bg-amber-400 text-zinc-950 text-[9px] font-bold font-mono shadow-xs">
+                      B 终点
+                    </span>
+                  </div>
+                )}
+
                 {/* Real-time playhead scrubber line */}
                 {isPlayingReference && (
                   <div
-                    className="absolute top-0 bottom-0 w-0.5 bg-emerald-400 shadow-[0_0_8px_#34d399] z-10 transition-all duration-75"
+                    className="absolute top-0 bottom-0 w-0.5 bg-emerald-400 shadow-[0_0_10px_#34d399] z-20 transition-all duration-75"
                     style={{ left: `${referenceProgress}%` }}
                   />
                 )}
 
                 {/* Pitch line overlay SVG */}
                 {referenceMetrics && (
-                  <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-40">
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-40 z-5">
                     <polyline
                       fill="none"
                       stroke="#34d399"
@@ -643,7 +731,9 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
 
                 {/* Amplitude Bars */}
                 {(referenceMetrics?.waveformData || Array.from({ length: 64 }, () => 0.4)).map((val, idx) => {
-                  const isActive = isPlayingReference && (idx / 64) * 100 <= referenceProgress;
+                  const pct = (idx / 64) * 100;
+                  const isActive = isPlayingReference && pct <= referenceProgress;
+                  const isInAbRange = isAbLoopEnabled && pct >= Math.min(loopStart, loopEnd) && pct <= Math.max(loopStart, loopEnd);
                   const isPause = referenceMetrics?.pausePoints.includes(idx);
                   return (
                     <div
@@ -655,12 +745,137 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
                           ? '#27272a'
                           : isActive
                           ? '#10b981'
-                          : '#059669',
-                        opacity: isActive ? 1.0 : 0.65,
+                          : isInAbRange
+                          ? '#059669'
+                          : '#047857',
+                        opacity: isActive ? 1.0 : isInAbRange ? 0.9 : 0.45,
                       }}
                     />
                   );
                 })}
+              </div>
+
+              {/* A-B LOOP CONTROLS & RANGE SLIDERS BAR */}
+              <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-xl p-2.5 flex flex-col gap-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAbLoopEnabled(!isAbLoopEnabled);
+                      if (isPlayingReference) handleStopAll();
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                      isAbLoopEnabled
+                        ? 'bg-emerald-600 text-white border-emerald-400 shadow-xs'
+                        : 'bg-zinc-950 text-zinc-400 hover:text-zinc-200 border-zinc-800'
+                    }`}
+                  >
+                    <Repeat size={12} className={isAbLoopEnabled ? 'animate-spin' : ''} />
+                    <span>{isAbLoopEnabled ? 'A-B 循环已启用' : '开启 A-B 片段循环'}</span>
+                  </button>
+
+                  {/* Preset Range Slices */}
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <span className="text-zinc-500">快捷片段:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAbLoopEnabled(true);
+                        setLoopStart(0);
+                        setLoopEnd(35);
+                      }}
+                      className="px-2 py-0.5 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 cursor-pointer"
+                    >
+                      前段 (0-35%)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAbLoopEnabled(true);
+                        setLoopStart(30);
+                        setLoopEnd(70);
+                      }}
+                      className="px-2 py-0.5 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 cursor-pointer"
+                    >
+                      核心中段 (30-70%)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAbLoopEnabled(true);
+                        setLoopStart(65);
+                        setLoopEnd(100);
+                      }}
+                      className="px-2 py-0.5 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 cursor-pointer"
+                    >
+                      句末难点 (65-100%)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAbLoopEnabled(true);
+                        setLoopStart(0);
+                        setLoopEnd(100);
+                      }}
+                      className="px-2 py-0.5 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 cursor-pointer"
+                    >
+                      全篇 (0-100%)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sliders for Point A and Point B */}
+                {isAbLoopEnabled && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-zinc-800/60">
+                    <div>
+                      <div className="flex items-center justify-between text-[11px] text-zinc-400 mb-1">
+                        <span className="flex items-center gap-1 font-semibold text-emerald-400">
+                          <Flag size={10} />
+                          起点 A ({loopStart}%)
+                        </span>
+                        <span className="font-mono text-[10px] text-zinc-500">
+                          {((loopStart / 100) * (referenceMetrics?.durationSeconds || 6)).toFixed(1)} 秒
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="95"
+                        value={loopStart}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          setLoopStart(val);
+                          if (val >= loopEnd) setLoopEnd(Math.min(100, val + 5));
+                        }}
+                        className="w-full accent-emerald-500 h-1.5 bg-zinc-800 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between text-[11px] text-zinc-400 mb-1">
+                        <span className="flex items-center gap-1 font-semibold text-amber-400">
+                          <Flag size={10} />
+                          终点 B ({loopEnd}%)
+                        </span>
+                        <span className="font-mono text-[10px] text-zinc-500">
+                          {((loopEnd / 100) * (referenceMetrics?.durationSeconds || 6)).toFixed(1)} 秒
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="5"
+                        max="100"
+                        value={loopEnd}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          setLoopEnd(val);
+                          if (val <= loopStart) setLoopStart(Math.max(0, val - 5));
+                        }}
+                        className="w-full accent-amber-400 h-1.5 bg-zinc-800 rounded-lg cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -677,11 +892,11 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
               </div>
 
               {/* Waveform Bar Track 2 */}
-              <div className="h-14 bg-zinc-900/90 rounded-lg p-1.5 relative overflow-hidden flex items-end justify-between gap-0.5 border border-zinc-800/80">
+              <div className="h-16 bg-zinc-900/90 rounded-xl p-1.5 relative overflow-hidden flex items-end justify-between gap-0.5 border border-zinc-800/80">
                 {/* Real-time playhead scrubber line */}
                 {isPlayingUser && (
                   <div
-                    className="absolute top-0 bottom-0 w-0.5 bg-indigo-400 shadow-[0_0_8px_#818cf8] z-10 transition-all duration-75"
+                    className="absolute top-0 bottom-0 w-0.5 bg-indigo-400 shadow-[0_0_10px_#818cf8] z-10 transition-all duration-75"
                     style={{ left: `${userProgress}%` }}
                   />
                 )}
@@ -761,7 +976,15 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
                 }`}
               >
                 {isPlayingReference ? <Pause size={13} /> : <Volume2 size={13} />}
-                <span>{isPlayingReference ? '暂停范读' : '播放范读示范'}</span>
+                <span>
+                  {isPlayingReference
+                    ? isAbLoopEnabled
+                      ? '暂停循环'
+                      : '暂停范读'
+                    : isAbLoopEnabled
+                    ? '播放 A-B 片段循环'
+                    : '播放范读示范'}
+                </span>
               </button>
 
               {/* Play My Voice */}
@@ -821,6 +1044,18 @@ export const StandardReferencePlayer: React.FC<StandardReferencePlayerProps> = (
           </div>
         </div>
       )}
+
+      {/* Review Poster Export Modal */}
+      <ReviewPosterModal
+        isOpen={isPosterOpen}
+        onClose={() => setIsPosterOpen(false)}
+        reading={activeReading}
+        scores={scores}
+        referenceMetrics={referenceMetrics}
+        userMetrics={userMetrics}
+        userTranscript={userTranscript}
+      />
     </div>
   );
 };
+

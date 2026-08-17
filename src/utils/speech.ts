@@ -58,6 +58,7 @@ class SpeechManager {
   private vadThreshold: number = 8; // Dynamic energy threshold (3-35)
   private silenceHangoverMs: number = 700; // Silence duration before slicing phrase
   private dialectAudioBoost: boolean = true; // High-frequency formants & sibilants boost for Sichuan/Chongqing
+  private dialectSemanticMatching: boolean = true; // Context-aware disambiguation for dialect homophones via Gemini
   private highPassFilterEnabled: boolean = true; // 85Hz rumble filter
   private noiseSuppressionMode: 'standard' | 'high_noise' | 'speech_clarity' = 'speech_clarity';
   private adaptiveNoiseFloor: number = 3; // Dynamically updated ambient room noise floor
@@ -83,6 +84,9 @@ class SpeechManager {
     if (typeof settings.dialectAudioBoost === 'boolean') {
       this.dialectAudioBoost = settings.dialectAudioBoost;
       this.applyFilterSettings();
+    }
+    if (typeof settings.dialectSemanticMatching === 'boolean') {
+      this.dialectSemanticMatching = settings.dialectSemanticMatching;
     }
     if (typeof settings.highPassFilterEnabled === 'boolean') {
       this.highPassFilterEnabled = settings.highPassFilterEnabled;
@@ -289,7 +293,20 @@ class SpeechManager {
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.text && data.text.trim()) {
-          const text = data.text.trim();
+          let text = data.text.trim();
+          
+          // Context-aware Dialect Semantic Disambiguation via Gemini
+          if (this.dialectSemanticMatching && (this.lang === 'zh-SC' || this.lang === 'sichuan')) {
+            try {
+              const disambiguated = await this.correctDialectSemantics(text);
+              if (disambiguated && disambiguated.correctedText) {
+                text = disambiguated.correctedText.trim();
+              }
+            } catch (ce) {
+              // Graceful fallback to original ASR text
+            }
+          }
+
           if (!this.isDuplicateTranscript(text)) {
             this.recordRecentTranscript(text);
             if (this.onResultCallback) {
@@ -610,6 +627,35 @@ class SpeechManager {
     }
   }
 
+  // Dialect Context-Aware Semantic Disambiguation via Gemini
+  public async correctDialectSemantics(
+    text: string,
+    dialect: string = 'sichuan'
+  ): Promise<{ correctedText: string; changes: Array<{ original: string; corrected: string; reason: string }> }> {
+    if (!text || !text.trim()) {
+      return { correctedText: '', changes: [] };
+    }
+    try {
+      const res = await fetch('/api/correct-dialect-semantics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, dialect }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.correctedText) {
+          return {
+            correctedText: data.correctedText,
+            changes: data.changes || [],
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[Dialect Semantic Disambiguation Request Failed]:', e);
+    }
+    return { correctedText: text, changes: [] };
+  }
+
   // Transcribe any provided audio Blob directly (e.g. from file upload or recorded sample)
   public async transcribeAudioFile(file: Blob): Promise<string> {
     try {
@@ -626,7 +672,14 @@ class SpeechManager {
       });
       if (res.ok) {
         const data = await res.json();
-        return data.text || '';
+        let rawText = data.text || '';
+        if (rawText && this.dialectSemanticMatching && (this.lang === 'zh-SC' || this.lang === 'sichuan')) {
+          const disambiguated = await this.correctDialectSemantics(rawText);
+          if (disambiguated.correctedText) {
+            rawText = disambiguated.correctedText;
+          }
+        }
+        return rawText;
       }
     } catch (e) {
       console.error('[Transcribe Audio File Error]:', e);

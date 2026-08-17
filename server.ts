@@ -220,6 +220,57 @@ async function startServer() {
     }
   });
 
+  // API 路由: 方言语义匹配与高频混淆词上下文纠错 (使用 gemini-3.1-flash-lite 超低延迟模型)
+  app.post('/api/correct-dialect-semantics', async (req, res) => {
+    try {
+      const { text, dialect = 'sichuan', apiKey } = req.body;
+      if (!text || !text.trim()) {
+        return res.json({ success: true, originalText: '', correctedText: '', changes: [] });
+      }
+
+      const ai = getGemini(apiKey);
+      const systemInstruction =
+        '你是一个精通西南官话（四川话、重庆话、贵州话、云南话）及方言声学音系学的超低延迟语义纠偏引擎。\n' +
+        '任务：分析输入的语音转写文本，利用全句语义上下文，精准纠正因方言发音混淆导致的同音/近音错别字，同时保留地道的川渝方言俚语、语气词和真实口语表达。\n' +
+        '高频纠错重点：\n' +
+        '1. 鼻边音 n/l 混淆（例如：蓝朋友 -> 男朋友、老刘 -> 老牛/老刘需根据上下文、老娘 -> 脑凉等）\n' +
+        '2. 唇齿音 f/h 混淆（例如：灰机 -> 飞机、吃饭 -> 吃唤、黄瓜 -> 房瓜、发挥 -> 花非等）\n' +
+        '3. 平翘舌 z/c/s 与 zh/ch/sh 混淆（例如：生词 -> 生吃、知识 -> 姿势、出租车 -> 初祖车等）\n' +
+        '4. 尖团音与开口度音系（例如：买孩 -> 买鞋、上街(gai) -> 上街、改手 -> 解手等）\n' +
+        '5. 准确保留正宗川渝方言词（如“要得”、“巴适”、“搞紧”、“啷个”、“莫得”、“爪子”、“雄起”、“算球”、“安逸”、“安神”、“落教”等，切勿误将其改回普通话书面语）。\n' +
+        '请以 JSON 格式输出：{"correctedText": "修正后的完整文本", "changes": [{"original": "原词", "corrected": "修正词", "reason": "纠错简要原因"}]}';
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-lite',
+        contents: `待纠错文本: "${text}"`,
+        config: {
+          systemInstruction,
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const rawJson = response.text?.trim() || '{}';
+      let parsed = { correctedText: text, changes: [] };
+      try {
+        parsed = JSON.parse(rawJson);
+      } catch (e) {
+        // Fallback if raw text
+        parsed = { correctedText: rawJson, changes: [] };
+      }
+
+      res.json({
+        success: true,
+        originalText: text,
+        correctedText: parsed.correctedText || text,
+        changes: parsed.changes || [],
+      });
+    } catch (err: any) {
+      console.error('[Dialect Semantic Correction Error]:', err);
+      res.status(500).json({ success: false, error: err.message || '方言语义纠错失败' });
+    }
+  });
+
   // API 路由: 健康检查
   app.get('/api/health', (req, res) => {
     res.json({
