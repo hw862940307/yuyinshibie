@@ -1,0 +1,10 @@
+{
+  "name": "宇宙无敌表达训练系统",
+  "description": "实时中文口语表达精准度训练系统，提供实时语音识别、字幕打字机流式呈现、语句音频原声对比与标准范读播放器、历史训练曲线对比模式、用户成长成就勋章系统、金句一键收藏库、每日训练打卡热力图与14条实时AI教练反馈。",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
